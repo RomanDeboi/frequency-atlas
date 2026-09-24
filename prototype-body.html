@@ -1,0 +1,27 @@
+<body>
+<header class="top">
+  <div class="brand"><div class="ey">PRIVATE RF KNOWLEDGE BASE</div><h1>Frequency Atlas</h1><small id="storageStatus">Завантаження бази…</small></div>
+  <div class="gsearch"><div class="gsearchbox"><span>⌕</span><input id="globalSearch" placeholder="Пошук: OFDM, Wi-Fi, 2450…" aria-label="Глобальний пошук"><button id="clearGlobal" title="Очистити">×</button></div><div id="globalResults" class="gresults hide"></div></div>
+  <div class="headerActions"><button class="primary" id="newBtn">＋ Додати запис</button><div class="tabs"><button id="mapTab" class="active">Карта спектра</button><button id="dbTab">База діапазонів</button></div></div>
+</header>
+<div class="layout">
+  <aside>
+    <div class="section"><div class="title">Відображати</div><div id="filters"></div></div>
+    <div class="section"><div class="title">Вибраний запис</div><div id="selected" class="selected"></div></div>
+    <div class="section"><div class="title">Закладки</div><div class="bookmarks"><button data-jump="433">433 MHz</button><button data-jump="868">868 MHz</button><button data-jump="1575.42">1575.42</button><button data-jump="2450">2.45 GHz</button><button data-jump="5800">5.8 GHz</button></div></div>
+    <div class="section"><div class="title">Мої дані</div><button class="ghost wide" id="exportBtn">↓ Експорт JSON</button><button class="ghost wide" id="importBtn">↑ Імпорт JSON</button><input type="file" id="importInput" accept=".json,application/json" hidden><p class="asideNote">Ця версія зберігає записи й зображення тільки в цьому браузері. Онлайн-синхронізація поки не підключена.</p></div>
+  </aside>
+  <main>
+    <section id="mapPage">
+      <div class="heading"><div><div class="ey">INTERACTIVE SPECTRUM</div><h2>Карта радіочастот</h2><p>Перетягуй шкалу мишкою або пальцем. Колесом — масштабування, подвійним кліком по смузі — картка.</p></div><div class="jump"><label for="jumpInput">Перейти до частоти</label><div class="jumprow"><input id="jumpInput" value="2450" placeholder="2450 або 2.4G"><button id="jumpBtn">Перейти</button></div><div id="err" class="err"></div></div></div>
+      <div class="stats"><div class="stat"><span>Центр</span><strong id="centerStat"></strong></div><div class="stat"><span>Вікно</span><strong id="spanStat"></strong></div><div class="stat"><span>Видимі</span><strong id="visibleStat"></strong></div><div class="zoom"><button id="zin" aria-label="Збільшити">＋</button><button id="zout" aria-label="Зменшити">−</button></div></div>
+      <div id="viewport" class="viewport"><div class="cursor"><span id="cursorLabel"></span></div><div id="axis" class="axis"></div><div id="bands" class="bands"></div></div>
+      <div class="footer"><span id="startLabel"></span><div class="track"><div id="overview" class="win"></div></div><span id="endLabel"></span></div>
+    </section>
+    <section id="dbPage" class="hide"><div class="heading"><div><div class="ey">SIGNAL DATABASE</div><h2>База діапазонів</h2><p>Діапазони об’єктів, описи, теги та власні скриншоти.</p></div><div class="dbToolbar"><button class="primary" id="newFromDb">＋ Новий запис</button><input id="search" class="search" placeholder="Пошук: Wi‑Fi, 2.4 GHz, telemetry…"></div></div><div class="dbgrid"><div id="list" class="list"></div><article id="detail" class="detail"></article></div></section>
+  </main>
+</div>
+<div id="notice" class="notice hide" role="status"></div>
+<div class="modalOverlay hide" id="editModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="formTitle"><div class="modalHeader"><div><div class="ey">ATLAS RECORD</div><h2 id="formTitle">Новий запис</h2></div><button type="button" class="ghost" id="closeForm" aria-label="Закрити">✕</button></div><form id="recordForm"><div class="fields entityFields"><label>Назва об’єкта / технології <input id="entityName" required maxlength="120" placeholder="Наприклад, Wi-Fi або власний об’єкт"></label><label>Категорія <select id="entityCategory"><option value="uav">БПЛА</option><option value="wifi">Wi-Fi</option><option value="bluetooth">Bluetooth</option><option value="cellular">GSM / LTE / 5G</option><option value="gnss">GNSS</option><option value="vhf">VHF</option><option value="uhf">UHF</option><option value="other" selected>Інше</option></select></label></div><div id="bandRows"></div><button class="ghost" type="button" id="addBandRow">＋ Ще один діапазон</button><div class="formError" id="formError" role="alert"></div><div class="modalFooter"><button type="button" class="ghost" id="cancelForm">Скасувати</button><button type="submit" class="primary">Зберегти запис</button></div></form></div></div>
+<div class="modalOverlay hide" id="previewModal"><div class="previewBox" role="dialog" aria-modal="true" aria-label="Перегляд скриншота"><button class="ghost previewClose" id="closePreview">✕ Закрити</button><img id="imagePreview" alt="Зразок спектра"><p id="previewCaption"></p></div></div>
+<script>
