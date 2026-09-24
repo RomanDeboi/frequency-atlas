@@ -88,7 +88,7 @@ export function createCloudAdapter(client: SupabaseClient, userId: string) {
         if (!data?.[i]?.signedUrl || data[i].error) {
           throw new Error("Один зі скриншотів недоступний у приватному сховищі.");
         }
-        signed.set(group[i], data[i].signedUrl);
+        signed.set(group[i], data[i].signedUrl!);
       }
     }
     signedUntil = Date.now() + SIGNED_URL_TTL_SECONDS * 1000;
