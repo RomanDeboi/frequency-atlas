@@ -29,7 +29,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://vidahhuiroselvxadglo.supabase.co
           # Publishable client key only: this is public, NEVER put a service-role/secret key here.
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_DSnr_z85-JlGBjaoQvG2Ag_BwKFa9lH
-          NEXT_PUBLIC_ATLAS_ALLOW_SIGNUP: 'true'
+          NEXT_PUBLIC_ATLAS_ALLOW_SIGNUP: 'false'
       - name: Disable Jekyll file filtering
         run: touch out/.nojekyll
       - name: Configure Pages
