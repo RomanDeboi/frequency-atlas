@@ -1,0 +1,50 @@
+name: Deploy Frequency Atlas to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Static Next.js build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_BASE_PATH: /frequency-atlas
+          NEXT_PUBLIC_SUPABASE_URL: https://vidahhuiroselvxadglo.supabase.co
+          # Publishable client key only: this is public, NEVER put a service-role/secret key here.
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_DSnr_z85-JlGBjaoQvG2Ag_BwKFa9lH
+          NEXT_PUBLIC_ATLAS_ALLOW_SIGNUP: 'true'
+      - name: Disable Jekyll file filtering
+        run: touch out/.nojekyll
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./out
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
