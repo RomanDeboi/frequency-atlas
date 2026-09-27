@@ -6,3 +6,12 @@
 
 /* User-defined categories */
 .categoryManageBtn{margin-top:12px!important}.categoryAddInline{margin-top:7px;text-align:left;justify-self:start;font-size:11px}.categoryModal{width:min(600px,100%)}.categoryList{display:grid;gap:8px;margin:14px 0 22px}.categoryItem{display:flex;gap:9px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px}.categorySwatch{display:block;flex:none;width:18px;height:18px;border-radius:6px;border:1px solid rgba(255,255,255,.2)}.categoryItemTitle{min-width:0;flex:1;display:grid;gap:3px}.categoryItemTitle strong{font-size:12px;overflow-wrap:anywhere}.categoryItemTitle small{font-size:10px;color:var(--muted)}.categoryItem button{font-size:11px}.categoryItem button:disabled{opacity:.4;cursor:not-allowed}.categoryFields{grid-template-columns:minmax(0,1fr) 130px}.categoryFields input[type=color]{height:40px;padding:5px;cursor:pointer}.categoryModal .modalFooter{flex-wrap:wrap}@media(max-width:590px){.categoryFields{grid-template-columns:minmax(0,1fr) 100px}.categoryItem{flex-wrap:wrap}.categoryItemTitle{flex-basis:calc(100% - 32px)}}
+
+/* Manual record affiliation: category fill stays unchanged, selection outline stays white. */
+.band[data-affiliation="friendly"]{border:3px solid #2bdb70}
+.band[data-affiliation="hostile"]{border:3px solid #fa5965}
+.row[data-affiliation="friendly"]{box-shadow:inset 3px 0 0 #2bdb70}
+.row[data-affiliation="hostile"]{box-shadow:inset 3px 0 0 #fa5965}
+.affiliationQuick{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:11px}
+.affiliationQuick select{border:1px solid var(--line);border-radius:8px;background:#0b192b;color:var(--text);padding:7px;max-width:150px;font:inherit}
+@media(max-width:590px){.affiliationQuick{width:100%}.affiliationQuick select{flex:1;max-width:none}}
