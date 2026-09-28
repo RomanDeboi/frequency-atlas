@@ -388,12 +388,19 @@ function select(id){selected=id;render()}
 function renderSelected(){const d=data.find(x=>x.id===selected);$('#selected').innerHTML=d?`<small>${escapeHtml(labels[d.cat])}</small><strong>${escapeHtml(d.entity)}</strong><span>${escapeHtml(d.band)}</span><small>${escapeHtml(d.a)}–${escapeHtml(d.b)} MHz</small><small>Позначка: ${AFFILIATION_LABELS[affiliationOf(d)]}</small><button class="ghost smallBtn" data-card="${escapeHtml(d.id)}">Відкрити картку</button>`:'<small>Нічого не вибрано</small>';const button=$('#selected [data-card]');if(button)button.onclick=()=>openCard(d.id)}
 // Higher priority takes the upper lane; equal priorities retain frequency order.
 // A lane can receive a later, non-overlapping band even when processed out of frequency order.
+// Bands whose frequency boundaries touch can share a lane without the usual visual gap.
+const BAND_EDGE_EPSILON_MHZ = 1e-9;
+function canShareFrequencyLane(band, other, gap) {
+  const touches = Math.abs(band.b-other.a) <= BAND_EDGE_EPSILON_MHZ ||
+    Math.abs(other.b-band.a) <= BAND_EDGE_EPSILON_MHZ;
+  return touches || band.b+gap<other.a || other.b+gap<band.a;
+}
 function planCategoryLanes(visible, windowWidth) {
   const gap=windowWidth*.008, lanes=[];
   const ordered=[...visible].sort((x,y)=>
     categoryPriority(y.cat)-categoryPriority(x.cat) || x.a-y.a || x.b-y.b || String(x.id).localeCompare(String(y.id)));
   for(const band of ordered) {
-    const lane=lanes.find(items=>items.every(other=>band.b+gap<other.a || other.b+gap<band.a));
+    const lane=lanes.find(items=>items.every(other=>canShareFrequencyLane(band,other,gap)));
     if(lane) lane.push(band); else lanes.push([band]);
   }
   return lanes;

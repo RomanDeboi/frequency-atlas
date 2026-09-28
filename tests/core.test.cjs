@@ -147,3 +147,37 @@ assert.match(element('#bands').innerHTML,/data-id="low"[^>]*z-index:21/); // Sel
 assert.match(element('#bands').innerHTML,/data-affiliation="hostile"/); // Red/green status preserved.
 assert.match(paletteCss,/\.cursor\{z-index:100\}/); // Frequency cursor above all layers.
 console.log('PASS: priority validation, built-in/custom defaults, and upper-lane/z-index ordering with affiliation intact');
+
+// Touching frequency-band endpoints must share one lane, even when a higher
+// priority band is processed first. Actual overlaps still use separate lanes.
+const touching = [
+  {...candidate,id:'touch-left',cat:'other',a:2400,b:2500},
+  {...candidate,id:'touch-right',cat:'wifi',a:2500,b:2600},
+];
+const shared = ui.planCategoryLanes(touching,500);
+assert.equal(shared.length,1,'exactly adjoining bands share a lane');
+assert.deepEqual([...shared[0].map(d=>d.id)].sort(),['touch-left','touch-right']);
+assert.equal(ui.planCategoryLanes([...touching].reverse(),500).length,1,'input order does not matter');
+assert.equal(ui.planCategoryLanes([
+  {...touching[0],id:'first',a:2300,b:2400},
+  {...touching[0],id:'second',a:2400,b:2500},
+  {...touching[1],id:'third',a:2500,b:2600},
+],500).length,1,'a chain of touching bands shares one lane');
+assert.equal(ui.planCategoryLanes([
+  {...touching[0],a:0.1,b:0.1+0.2},
+  {...touching[1],a:0.3,b:0.4},
+],500).length,1,'floating-point rounding at a shared boundary is accepted');
+assert.equal(ui.planCategoryLanes([
+  touching[0], {...touching[1],a:2499.99},
+],500).length,2,'genuinely overlapping bands stay in separate lanes');
+assert.equal(ui.planCategoryLanes([
+  touching[0], {...touching[1],a:2501},
+],500).length,2,'the existing visual gap is retained for nearly separated bands');
+assert.equal(ui.planCategoryLanes([
+  touching[0], {...touching[1],a:2510},
+],500).length,1,'clearly separated bands still share lanes');
+ui.setTestRecords(touching);
+ui.renderMap();
+assert.match(element('#bands').innerHTML,/data-id="touch-left"[^>]*top:18px/);
+assert.match(element('#bands').innerHTML,/data-id="touch-right"[^>]*top:18px/);
+console.log('PASS: touching band edges share a row, overlap still separates rows, existing priority is preserved');
