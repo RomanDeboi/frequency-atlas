@@ -11,6 +11,7 @@ const CATEGORY_META_ID = '__frequency_atlas_category_settings_v1__';
 const CATEGORY_META_KIND = 'frequency-atlas-categories-v1';
 const MAX_CUSTOM_CATEGORIES = 64;
 let customCategories = [], editingCategoryId = null, categoryManagerFromForm = false;
+let baseCategoryPriorities = {}; // Standard categories retain fixed names/colors, but their layer is configurable.
 const DEFAULT_CATEGORY_COLOR = '#9c8df6';
 const demoData=[
 {id:'airband',entity:'Civil aviation voice',band:'VHF Airband',cat:'vhf',a:118,b:137,purpose:'Voice / aviation communications',tech:'AM',desc:'Демонстраційний довідковий запис цивільного VHF авіадіапазону.',tags:['VHF','aviation','voice','AM']},
@@ -27,6 +28,34 @@ const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const MAX_CATEGORY_PRIORITY = 10;
+function validatePriority(value) {
+  if (value == null) return 0; // Existing categories/backups have no priority field.
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > MAX_CATEGORY_PRIORITY) {
+    throw Error('Пріоритет категорії має бути цілим числом від 0 до 10.');
+  }
+  return value;
+}
+function validateBasePriorities(input) {
+  if (input == null) return {};
+  if (typeof input !== 'object' || Array.isArray(input)) throw Error('Некоректні пріоритети стандартних категорій.');
+  const result = {};
+  for (const [id, value] of Object.entries(input)) {
+    if (!Object.hasOwn(BASE_LABELS,id)) throw Error('Невідома стандартна категорія для пріоритету.');
+    const priority=validatePriority(value);
+    if (priority) result[id]=priority; // Priority 0 is the default; omit from metadata.
+  }
+  return result;
+}
+function setBaseCategoryPriorities(input) { baseCategoryPriorities=validateBasePriorities(input); }
+function categoryPriority(id) {
+  if (Object.hasOwn(BASE_LABELS,id)) return baseCategoryPriorities[id] ?? 0;
+  return customCategories.find(item=>item.id===id)?.priority ?? 0;
+}
+function priorityOptions(value=0) {
+  return Array.from({length:MAX_CATEGORY_PRIORITY+1},(_,priority)=>
+    `<option value="${priority}" ${priority===value?'selected':''}>${priority}${priority===0?' — звичайний':priority===MAX_CATEGORY_PRIORITY?' — найвищий':''}</option>`).join('');
+}
 function validateCategories(input) {
   if (input == null) return [];
   if (!Array.isArray(input) || input.length > MAX_CUSTOM_CATEGORIES) throw Error('Некоректний список власних категорій.');
@@ -39,7 +68,7 @@ function validateCategories(input) {
     if (!/^#[0-9a-f]{6}$/.test(color)) throw Error('Некоректний колір категорії.');
     if (ids.has(item.id) || names.has(normalize(name))) throw Error('Категорії з однаковими назвами або ID не дозволені.');
     ids.add(item.id); names.add(normalize(name));
-    return {id: item.id, name, color};
+    return {id: item.id, name, color, priority: validatePriority(item.priority)};
   });
 }
 function setCategories(definitions) {
@@ -52,20 +81,21 @@ function setCategories(definitions) {
   }
   for (const key of previous) if (!Object.hasOwn(labels, key)) enabled.delete(key);
 }
-function categoryMeta(definitions) {
+function categoryMeta(definitions,priorities=baseCategoryPriorities) {
   return {id:CATEGORY_META_ID, metaType:CATEGORY_META_KIND, entityId:CATEGORY_META_ID,
     entity:'Category preferences (private metadata)', band:'', cat:'other', a:0, b:0,
-    images:[], customCategories:definitions};
+    images:[], customCategories:definitions, baseCategoryPriorities:priorities};
 }
 function unpackRecords(records) {
   if (!Array.isArray(records)) throw Error('Некоректна база записів.');
   const meta = records.find(item => item?.id === CATEGORY_META_ID);
   if (meta && meta.metaType !== CATEGORY_META_KIND) throw Error('Конфлікт службового ID налаштувань категорій.');
   const definitions = validateCategories(meta?.customCategories || []);
+  const priorities = validateBasePriorities(meta?.baseCategoryPriorities || {});
   const known = new Set([...Object.keys(BASE_LABELS), ...definitions.map(item=>item.id)]);
   const visible = records.filter(item => item?.id !== CATEGORY_META_ID);
   if (visible.some(item => !known.has(item.cat))) throw Error('У базі є запис із категорією без її налаштувань. Віднови категорії з резервної копії.');
-  setCategories(definitions);
+  setCategories(definitions); setBaseCategoryPriorities(priorities);
   return visible;
 }
 function renderCategoryOptions(preferred = $('#entityCategory').value) {
@@ -83,14 +113,15 @@ function notify(message, bad=false){const e=$('#notice');e.textContent=message;e
 function openDb(){return new Promise((resolve,reject)=>{if(!('indexedDB' in window))return reject(new Error('IndexedDB недоступна у цьому браузері.'));const req=indexedDB.open(DB_NAME,1);req.onupgradeneeded=()=>{const db=req.result;db.createObjectStore('bands',{keyPath:'id'});db.createObjectStore('meta',{keyPath:'key'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 function txRequest(name,method,...args){return new Promise((resolve,reject)=>{const tx=store.transaction(name,'readonly'),req=tx.objectStore(name)[method](...args);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)})}
 function saveAll(records){return new Promise((resolve,reject)=>{const tx=store.transaction(['bands','meta'],'readwrite');const object=tx.objectStore('bands');object.clear();records.forEach(record=>object.put(record));tx.objectStore('meta').put({key:'initialized',value:true});tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Не вдалося записати дані'))})}
-async function persist(next,selection=selected,categoryDraft=customCategories){
+async function persist(next,selection=selected,categoryDraft=customCategories,basePriorityDraft=baseCategoryPriorities){
   if(saving){notify('Дочекайся завершення попереднього збереження.',true);return false}
   saving=true;
   $('#storageStatus').textContent=cloudMode?'Синхронізація з хмарою…':'Збереження в браузері…';
   try{
     let warning;
     const draft = validateCategories(categoryDraft);
-    const packed = [...next, ...(draft.length ? [categoryMeta(draft)] : [])];
+    const standardPriorities=validateBasePriorities(basePriorityDraft);
+    const packed = [...next, ...((draft.length || Object.keys(standardPriorities).length) ? [categoryMeta(draft,standardPriorities)] : [])];
     if (next.some(item => item.id === CATEGORY_META_ID)) throw Error('Зарезервований ID запису.');
     if(cloudMode){const outcome=await window.AtlasCloud.save(packed);data=unpackRecords(outcome.records);warning=outcome.warning}
     else{await saveAll(packed);data=unpackRecords(packed)}
@@ -127,12 +158,66 @@ async function load(){
   }
 }
 function renderFilters(){$('#filters').innerHTML=Object.entries(labels).map(([key,label])=>`<label class="filter"><input type="checkbox" data-cat="${key}" ${enabled.has(key)?'checked':''}><span class="dot" style="background:${colors[key]}"></span><span>${label}</span></label>`).join('');$$('[data-cat]').forEach(el=>el.onchange=()=>{el.checked?enabled.add(el.dataset.cat):enabled.delete(el.dataset.cat);render()})}
+// The built-in category colors are CSS variables; a native color input needs hex values.
+function categoryColorHex(id) {
+  const source = colors[id];
+  if (typeof source !== 'string') return null;
+  const variable = /^var\((--[a-z0-9-]+)\)$/.exec(source);
+  const resolved = variable
+    ? getComputedStyle(document.documentElement).getPropertyValue(variable[1]).trim()
+    : source.trim();
+  return /^#[0-9a-f]{6}$/i.test(resolved) ? resolved.toLowerCase() : null;
+}
+function updateCategoryPaletteSelection() {
+  const chosen = $('#categoryColor').value.toLowerCase();
+  $$('#categoryPalette [data-palette-color]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.paletteColor === chosen));
+  });
+  const owners = Object.entries(labels)
+    .filter(([id]) => categoryColorHex(id) === chosen)
+    .map(([, name]) => name);
+  $('#categoryColorUsage').textContent = owners.length
+    ? `Колір уже використовується: ${owners.join(', ')}.`
+    : 'Цей колір не використовується іншими категоріями.';
+}
+function renderCategoryPalette() {
+  const palette = $('#categoryPalette');
+  palette.innerHTML = Object.entries(labels).map(([id, name]) => {
+    const color = categoryColorHex(id);
+    if (!color) return '';
+    return `<button type="button" class="categoryPaletteOption" data-palette-color="${color}" `+
+      `aria-label="Колір категорії ${escapeHtml(name)}: ${color}" aria-pressed="false" title="${escapeHtml(name)} · ${color}">`+
+      `<span class="categoryPaletteSwatch" style="background:${color}" aria-hidden="true"></span>`+
+      `<span class="categoryPaletteName">${escapeHtml(name)}</span>`+
+      `<small>${color.toUpperCase()}</small></button>`;
+  }).join('');
+  $$('#categoryPalette [data-palette-color]').forEach(button => button.onclick = () => {
+    $('#categoryColor').value = button.dataset.paletteColor;
+    updateCategoryPaletteSelection();
+  });
+  updateCategoryPaletteSelection();
+}
 function renderCategoryManager() {
+  const standards=$('#standardCategoryPriorities');
+  standards.innerHTML=Object.entries(BASE_LABELS).map(([id,name])=>
+    `<label class="standardCategoryPriority"><span class="categorySwatch" style="background:${BASE_COLORS[id]}"></span>`+
+    `<span>${escapeHtml(name)}</span><select data-standard-priority="${id}" aria-label="Пріоритет категорії ${escapeHtml(name)}">${priorityOptions(categoryPriority(id))}</select></label>`).join('');
+  $$('#standardCategoryPriorities [data-standard-priority]').forEach(input => input.onchange=async()=>{
+    const id=input.dataset.standardPriority, previous=categoryPriority(id);
+    const next=Number(input.value);
+    try {validatePriority(next);} catch(error) {input.value=String(previous);notify(error.message,true);return;}
+    const proposed={...baseCategoryPriorities,[id]:next};
+    if (!next) delete proposed[id];
+    input.disabled=true;
+    try { if(await persist(data,selected,customCategories,proposed)) notify('Пріоритет категорії збережено.');
+          else input.value=String(previous); }
+    finally {input.disabled=false;}
+  });
   const list = $('#customCategoryList');
   list.innerHTML = customCategories.length ? customCategories.map(item => {
     const count = data.filter(record => record.cat === item.id).length;
     return `<div class="categoryItem"><span class="categorySwatch" style="background:${item.color}"></span>`+
-      `<div class="categoryItemTitle"><strong>${escapeHtml(item.name)}</strong><small>${count} запис(ів)</small></div>`+
+      `<div class="categoryItemTitle"><strong>${escapeHtml(item.name)}</strong><small>${count} запис(ів) · пріоритет ${categoryPriority(item.id)}</small></div>`+
       `<button type="button" class="ghost" data-edit-category="${item.id}">Редагувати</button>`+
       `<button type="button" class="ghost danger" data-delete-category="${item.id}" ${count ? 'disabled title="Спочатку перенеси записи до іншої категорії"' : ''}>Видалити</button></div>`;
   }).join('') : '<p class="asideNote">Власних категорій ще немає. Стандартні категорії залишаються доступними.</p>';
@@ -141,6 +226,8 @@ function renderCategoryManager() {
     if (!item) return;
     editingCategoryId = item.id;
     $('#categoryName').value = item.name; $('#categoryColor').value = item.color;
+    $('#categoryPriority').innerHTML = priorityOptions(categoryPriority(item.id));
+    updateCategoryPaletteSelection();
     $('#categorySubmit').textContent = 'Зберегти зміни';
     $('#categoryCancelEdit').classList.remove('hide');
     $('#categoryError').textContent = '';
@@ -153,7 +240,7 @@ function renderCategoryManager() {
     const draft = customCategories.filter(value => value.id !== item.id);
     if (await persist(data, selected, draft)) {
       if (editingCategoryId === item.id) resetCategoryEditor();
-      renderCategoryManager(); renderCategoryOptions();
+      renderCategoryManager(); renderCategoryOptions(); renderCategoryPalette();
       notify('Категорію видалено.');
     }
   });
@@ -161,12 +248,14 @@ function renderCategoryManager() {
 function resetCategoryEditor() {
   editingCategoryId = null;
   $('#categoryName').value = ''; $('#categoryColor').value = DEFAULT_CATEGORY_COLOR;
+  $('#categoryPriority').innerHTML = priorityOptions(0);
   $('#categorySubmit').textContent = 'Додати категорію';
   $('#categoryCancelEdit').classList.add('hide'); $('#categoryError').textContent = '';
+  updateCategoryPaletteSelection();
 }
 function openCategoryManager(fromForm=false) {
   categoryManagerFromForm = fromForm;
-  resetCategoryEditor(); renderCategoryManager();
+  resetCategoryEditor(); renderCategoryManager(); renderCategoryPalette();
   $('#categoryModal').classList.remove('hide'); $('#categoryModal').setAttribute('aria-hidden','false');
   $('#categoryName').focus();
 }
@@ -176,18 +265,18 @@ function closeCategoryManager() {
 }
 async function submitCategory(e) {
   e.preventDefault();
-  const name = $('#categoryName').value.trim(), color = $('#categoryColor').value;
+  const name = $('#categoryName').value.trim(), color = $('#categoryColor').value, priority = Number($('#categoryPriority').value);
   const id = editingCategoryId || `user-${uid()}`;
   const draft = editingCategoryId
-    ? customCategories.map(item => item.id === id ? {...item, name, color} : item)
-    : [...customCategories, {id, name, color}];
+    ? customCategories.map(item => item.id === id ? {...item, name, color, priority} : item)
+    : [...customCategories, {id, name, color, priority}];
   try { validateCategories(draft); }
   catch (error) { $('#categoryError').textContent = error.message; return; }
   $('#categorySubmit').disabled = true;
   try {
     if (await persist(data, selected, draft)) {
       const returnToForm = categoryManagerFromForm && !editingCategoryId;
-      resetCategoryEditor(); renderCategoryManager(); renderCategoryOptions(returnToForm ? id : $('#entityCategory').value);
+      resetCategoryEditor(); renderCategoryManager(); renderCategoryOptions(returnToForm ? id : $('#entityCategory').value); renderCategoryPalette();
       notify('Категорію збережено у приватній базі.');
       if (returnToForm) closeCategoryManager();
     }
@@ -195,7 +284,19 @@ async function submitCategory(e) {
 }
 function select(id){selected=id;render()}
 function renderSelected(){const d=data.find(x=>x.id===selected);$('#selected').innerHTML=d?`<small>${escapeHtml(labels[d.cat])}</small><strong>${escapeHtml(d.entity)}</strong><span>${escapeHtml(d.band)}</span><small>${escapeHtml(d.a)}–${escapeHtml(d.b)} MHz</small><small>Позначка: ${AFFILIATION_LABELS[affiliationOf(d)]}</small><button class="ghost smallBtn" data-card="${escapeHtml(d.id)}">Відкрити картку</button>`:'<small>Нічого не вибрано</small>';const button=$('#selected [data-card]');if(button)button.onclick=()=>openCard(d.id)}
-function renderMap(){const [a,b,w]=range();$('#centerStat').textContent=fmt(center);$('#spanStat').textContent=fmt(w);$('#cursorLabel').textContent=fmt(center);$('#startLabel').textContent=fmt(a);$('#endLabel').textContent=fmt(b);const visible=data.filter(x=>enabled.has(x.cat)&&x.b>=a&&x.a<=b);$('#visibleStat').textContent=visible.length;const step=stepFor(w);let ticks='';for(let v=Math.ceil(a/step)*step;v<=b+step*.001;v+=step)ticks+=`<div class="tick" style="left:${((v-a)/w)*100}%"><span>${fmt(v)}</span></div>`;$('#axis').innerHTML=ticks;const lanes=[];[...visible].sort((x,y)=>x.a-y.a).forEach(d=>{const lane=lanes.find(l=>l[l.length-1].b+w*.008<d.a);lane?lane.push(d):lanes.push([d])});let html='';lanes.forEach((lane,i)=>lane.forEach(d=>{const s=Math.max(a,d.a),e=Math.min(b,d.b),left=(s-a)/w*100,width=Math.max((e-s)/w*100,.35);html+=`<button class="band ${d.id===selected?'sel':''}" data-affiliation="${affiliationOf(d)}" data-id="${escapeHtml(d.id)}" title="${escapeHtml(d.entity+' · '+d.band+' · '+AFFILIATION_LABELS[affiliationOf(d)])}" style="left:${left}%;width:${width}%;top:${i*72+18}px;background:${colors[d.cat]}"><strong>${escapeHtml(d.entity)}</strong><span>${escapeHtml(d.band)}</span></button>`}));$('#bands').innerHTML=html||'<div class="noBands">У цьому вікні немає записів.</div>';$$('.band').forEach(el=>{el.onpointerdown=e=>e.stopPropagation();el.onclick=()=>select(el.dataset.id);el.ondblclick=()=>openCard(el.dataset.id)});$('#bands').style.minHeight=Math.max(330,lanes.length*72+50)+'px';$('#overview').style.left=(a/MAX*100)+'%';$('#overview').style.width=Math.max(w/MAX*100,.6)+'%'}
+// Higher priority takes the upper lane; equal priorities retain frequency order.
+// A lane can receive a later, non-overlapping band even when processed out of frequency order.
+function planCategoryLanes(visible, windowWidth) {
+  const gap=windowWidth*.008, lanes=[];
+  const ordered=[...visible].sort((x,y)=>
+    categoryPriority(y.cat)-categoryPriority(x.cat) || x.a-y.a || x.b-y.b || String(x.id).localeCompare(String(y.id)));
+  for(const band of ordered) {
+    const lane=lanes.find(items=>items.every(other=>band.b+gap<other.a || other.b+gap<band.a));
+    if(lane) lane.push(band); else lanes.push([band]);
+  }
+  return lanes;
+}
+function renderMap(){const [a,b,w]=range();$('#centerStat').textContent=fmt(center);$('#spanStat').textContent=fmt(w);$('#cursorLabel').textContent=fmt(center);$('#startLabel').textContent=fmt(a);$('#endLabel').textContent=fmt(b);const visible=data.filter(x=>enabled.has(x.cat)&&x.b>=a&&x.a<=b);$('#visibleStat').textContent=visible.length;const step=stepFor(w);let ticks='';for(let v=Math.ceil(a/step)*step;v<=b+step*.001;v+=step)ticks+=`<div class="tick" style="left:${((v-a)/w)*100}%"><span>${fmt(v)}</span></div>`;$('#axis').innerHTML=ticks;const lanes=planCategoryLanes(visible,w);let html='';lanes.forEach((lane,i)=>lane.forEach(d=>{const s=Math.max(a,d.a),e=Math.min(b,d.b),left=(s-a)/w*100,width=Math.max((e-s)/w*100,.35);html+=`<button class="band ${d.id===selected?'sel':''}" data-affiliation="${affiliationOf(d)}" data-id="${escapeHtml(d.id)}" title="${escapeHtml(d.entity+' · '+d.band+' · '+AFFILIATION_LABELS[affiliationOf(d)]+' · пріоритет '+categoryPriority(d.cat))}" style="left:${left}%;width:${width}%;top:${i*72+18}px;background:${colors[d.cat]};z-index:${20+categoryPriority(d.cat)*2+(d.id===selected?1:0)}"><strong>${escapeHtml(d.entity)}</strong><span>${escapeHtml(d.band)}</span></button>`}));$('#bands').innerHTML=html||'<div class="noBands">У цьому вікні немає записів.</div>';$$('.band').forEach(el=>{el.onpointerdown=e=>e.stopPropagation();el.onclick=()=>select(el.dataset.id);el.ondblclick=()=>openCard(el.dataset.id)});$('#bands').style.minHeight=Math.max(330,lanes.length*72+50)+'px';$('#overview').style.left=(a/MAX*100)+'%';$('#overview').style.width=Math.max(w/MAX*100,.6)+'%'}
 function renderDb(){const term=$('#search').value.trim(),arr=data.filter(x=>enabled.has(x.cat)&&matches(x,term));$('#list').innerHTML=arr.map(d=>`<button class="row ${d.id===selected?'active':''}" data-affiliation="${affiliationOf(d)}" data-row="${escapeHtml(d.id)}"><span class="dot" style="background:${colors[d.cat]}"></span><div><strong>${escapeHtml(d.entity)}</strong><span>${escapeHtml(d.band)}</span><span>Позначка: ${AFFILIATION_LABELS[affiliationOf(d)]}</span></div><small>${escapeHtml(d.a)}–${escapeHtml(d.b)}</small></button>`).join('')||'<div class="noBands">Нічого не знайдено.</div>';$$('[data-row]').forEach(el=>el.onclick=()=>select(el.dataset.row));const d=data.find(x=>x.id===selected)||arr[0];if(!d){$('#detail').innerHTML='<div class="noBands">Вибери запис або створи новий.</div>';return}const related=data.filter(x=>x.entityId===d.entityId&&x.id!==d.id);const quickOptions=Object.entries(AFFILIATION_LABELS).map(([value,label])=>'<option value="'+value+'"'+(affiliationOf(d)===value?' selected':'')+'>'+label+'</option>').join('');$('#detail').innerHTML=`
 <div class="detailActions"><small>${escapeHtml(labels[d.cat])}</small><label class="affiliationQuick">Позначка <select id="quickAffiliation" aria-label="Ручна позначка запису">${quickOptions}</select></label><span class="spacer"></span><button class="ghost" id="editBtn">Редагувати</button><button class="ghost" id="addRelatedBtn">+ Діапазон</button><button class="ghost danger" id="deleteBtn">Видалити</button></div>
 <h3>${escapeHtml(d.entity)}</h3><div class="muted">${escapeHtml(d.band)}</div><div class="range">${fmt(d.a)} — ${fmt(d.b)}</div>
@@ -231,7 +332,7 @@ async function exportBackup(){
   try{
     $('#storageStatus').textContent=cloudMode?'Завантаження скриншотів до резервної копії…':'Створення резервної копії…';
     const records=cloudMode?await window.AtlasCloud.exportBackup(data):data;
-    const blob=new Blob([JSON.stringify({format:'frequency-atlas-v2',exportedAt:new Date().toISOString(),categories:customCategories,records},null,2)],{type:'application/json'});
+    const blob=new Blob([JSON.stringify({format:'frequency-atlas-v2',exportedAt:new Date().toISOString(),categories:customCategories,baseCategoryPriorities,records},null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob),link=document.createElement('a');
     link.href=url;link.download=`frequency-atlas-backup-${new Date().toISOString().slice(0,10)}.json`;link.click();
     setTimeout(()=>URL.revokeObjectURL(url),5000);
@@ -239,11 +340,11 @@ async function exportBackup(){
   }catch(e){notify('Не вдалося створити резервну копію: '+e.message,true)}
   finally{exportBusy=false;$('#storageStatus').textContent=cloudMode?'Приватна хмарна база · Supabase':'Локальна база · IndexedDB'}
 }
-async function importBackup(file){if(!file)return;if(file.size>80*1024*1024){notify('Файл імпорту завеликий (максимум 80 МБ).',true);return}try{const parsed=JSON.parse(await file.text());if(parsed.format!=='frequency-atlas-v2'||!Array.isArray(parsed.records)||parsed.records.length>10000)throw Error('Це не резервна копія Frequency Atlas v2.');const incomingCats=validateCategories(parsed.categories||[]), allowed=Object.fromEntries([...Object.entries(BASE_LABELS),...incomingCats.map(cat=>[cat.id,cat.name])]);const records=parsed.records.map(entry=>validateImport(entry,allowed));if(new Set(records.map(x=>x.id)).size!==records.length)throw Error('У файлі є повторювані ID.');if(!confirm(`Замінити поточну базу (${data.length} записів) даними з файлу (${records.length} записів) і ${incomingCats.length} власними категоріями? Спочатку експортуй резервну копію, якщо потрібно.`))return;if(await persist(records,records[0]?.id??null,incomingCats)){renderCategoryOptions();notify('Базу імпортовано: '+records.length+' записів.')}}catch(e){notify('Помилка імпорту: '+e.message,true)}}
+async function importBackup(file){if(!file)return;if(file.size>80*1024*1024){notify('Файл імпорту завеликий (максимум 80 МБ).',true);return}try{const parsed=JSON.parse(await file.text());if(parsed.format!=='frequency-atlas-v2'||!Array.isArray(parsed.records)||parsed.records.length>10000)throw Error('Це не резервна копія Frequency Atlas v2.');const incomingCats=validateCategories(parsed.categories||[]), incomingPriorities=validateBasePriorities(parsed.baseCategoryPriorities||{}), allowed=Object.fromEntries([...Object.entries(BASE_LABELS),...incomingCats.map(cat=>[cat.id,cat.name])]);const records=parsed.records.map(entry=>validateImport(entry,allowed));if(new Set(records.map(x=>x.id)).size!==records.length)throw Error('У файлі є повторювані ID.');if(!confirm(`Замінити поточну базу (${data.length} записів) даними з файлу (${records.length} записів) і ${incomingCats.length} власними категоріями? Спочатку експортуй резервну копію, якщо потрібно.`))return;if(await persist(records,records[0]?.id??null,incomingCats,incomingPriorities)){renderCategoryOptions();notify('Базу імпортовано: '+records.length+' записів.')}}catch(e){notify('Помилка імпорту: '+e.message,true)}}
 $('#jumpBtn').onclick=()=>{const v=parseFreq($('#jumpInput').value);if(v===null||v<0||v>MAX)$('#err').textContent='Введи 0–7000 MHz, наприклад 433, 2450 або 2.4G';else jump(v)};$('#jumpInput').onkeydown=e=>{if(e.key==='Enter')$('#jumpBtn').click()};$$('[data-jump]').forEach(button=>button.onclick=()=>jump(Number(button.dataset.jump)));$('#zin').onclick=()=>{span=clamp(span*.65,MINSPAN,MAX);renderMap()};$('#zout').onclick=()=>{span=clamp(span*1.5,MINSPAN,MAX);renderMap()};
 $('#viewport').addEventListener('wheel',e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect(),x=clamp((e.clientX-r.left)/r.width,0,1),[a,,w]=range(),anchor=a+x*w,ns=clamp(span*(e.deltaY>0?1.16:.86),MINSPAN,MAX);span=ns;center=clamp(anchor-(x-.5)*ns,0,MAX);renderMap()},{passive:false});$('#viewport').onpointerdown=e=>{e.currentTarget.setPointerCapture(e.pointerId);drag={x:e.clientX,c:center}};$('#viewport').onpointermove=e=>{if(!drag)return;const w=e.currentTarget.clientWidth||1;center=clamp(drag.c-(e.clientX-drag.x)/w*span,0,MAX);renderMap()};$('#viewport').onpointerup=$('#viewport').onpointercancel=()=>drag=null;
 $('#mapTab').onclick=showMap;$('#dbTab').onclick=showDb;$('#search').oninput=renderDb;$('#globalSearch').oninput=renderGlobalSearch;$('#globalSearch').onfocus=renderGlobalSearch;$('#clearGlobal').onclick=()=>{$('#globalSearch').value='';renderGlobalSearch();$('#globalSearch').focus()};document.addEventListener('click',e=>{if(!e.target.closest('.gsearch'))$('#globalResults').classList.add('hide')});
-$('#manageCategoriesBtn').onclick=()=>openCategoryManager();$('#newCategoryBtn').onclick=()=>openCategoryManager(true);$('#categoryForm').onsubmit=submitCategory;$('#closeCategories').onclick=closeCategoryManager;$('#categoryCancel').onclick=closeCategoryManager;$('#categoryCancelEdit').onclick=resetCategoryEditor;$('#categoryModal').onclick=e=>{if(e.target.id==='categoryModal')closeCategoryManager()};$('#newBtn').onclick=()=>openForm('create');$('#newFromDb').onclick=()=>openForm('create');$('#addBandRow').onclick=()=>addBandRow();$('#recordForm').onsubmit=saveForm;$('#closeForm').onclick=closeForm;$('#cancelForm').onclick=closeForm;$('#editModal').onclick=e=>{if(e.target.id==='editModal')closeForm()};$('#closePreview').onclick=()=>$('#previewModal').classList.add('hide');$('#previewModal').onclick=e=>{if(e.target.id==='previewModal')$('#previewModal').classList.add('hide')};document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#categoryModal').classList.contains('hide'))closeCategoryManager();else closeForm();$('#previewModal').classList.add('hide')}});
+$('#categoryColor').oninput=updateCategoryPaletteSelection;$('#categoryColor').onchange=updateCategoryPaletteSelection;$('#manageCategoriesBtn').onclick=()=>openCategoryManager();$('#newCategoryBtn').onclick=()=>openCategoryManager(true);$('#categoryForm').onsubmit=submitCategory;$('#closeCategories').onclick=closeCategoryManager;$('#categoryCancel').onclick=closeCategoryManager;$('#categoryCancelEdit').onclick=resetCategoryEditor;$('#categoryModal').onclick=e=>{if(e.target.id==='categoryModal')closeCategoryManager()};$('#newBtn').onclick=()=>openForm('create');$('#newFromDb').onclick=()=>openForm('create');$('#addBandRow').onclick=()=>addBandRow();$('#recordForm').onsubmit=saveForm;$('#closeForm').onclick=closeForm;$('#cancelForm').onclick=closeForm;$('#editModal').onclick=e=>{if(e.target.id==='editModal')closeForm()};$('#closePreview').onclick=()=>$('#previewModal').classList.add('hide');$('#previewModal').onclick=e=>{if(e.target.id==='previewModal')$('#previewModal').classList.add('hide')};document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#categoryModal').classList.contains('hide'))closeCategoryManager();else closeForm();$('#previewModal').classList.add('hide')}});
 $('#exportBtn').onclick=exportBackup;$('#importBtn').onclick=()=>$('#importInput').click();$('#importInput').onchange=async e=>{await importBackup(e.target.files[0]);e.target.value=''};
 
 if(cloudMode){

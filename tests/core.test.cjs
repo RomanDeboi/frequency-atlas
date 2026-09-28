@@ -44,7 +44,8 @@ const renderContext = {
   document: {querySelector: element, querySelectorAll: () => []},
 };
 const renderSource = src.slice(0,src.indexOf("$('#jumpBtn').onclick"));
-const ui = vm.runInNewContext(renderSource+'\n({setTestRecords(records){data=records;selected=records[0]?.id??null},renderMap,renderDb,renderSelected})',renderContext);
+const ui = vm.runInNewContext(renderSource+`\n({setTestRecords(records){data=records;selected=records[0]?.id??null},renderMap,renderDb,renderSelected,
+    setBaseCategoryPriorities,setCategories,categoryPriority,planCategoryLanes})`,renderContext);
 ui.setTestRecords([
   {...candidate,id:'f',a:2400,b:2410,affiliation:'friendly'},
   {...candidate,id:'h',a:2420,b:2430,affiliation:'hostile'},
@@ -66,3 +67,83 @@ assert.match(body,/id="entityAffiliation"/);
 assert.match(css,/\.band\[data-affiliation="friendly"\]\{border:3px solid #2bdb70\}/);
 assert.match(css,/\.band\[data-affiliation="hostile"\]\{border:3px solid #fa5965\}/);
 console.log('PASS: affiliation UI markup, colors, default status, record card and search list');
+
+// Category-color palette: standard CSS-variable colors and personal colors share one picker.
+const paletteBody = fs.readFileSync(path.join(__dirname, '../prototype-body.html'),'utf8');
+const paletteCss = fs.readFileSync(path.join(__dirname, '../prototype-extra.css'),'utf8');
+assert.match(paletteBody,/id="categoryPalette"/);
+assert.match(paletteBody,/id="categoryColorUsage"/);
+assert.match(paletteCss,/\.categoryPaletteOption\[aria-pressed="true"\]/);
+const paletteUi = {
+  '#categoryPalette': {innerHTML:''},
+  '#categoryColor': {value:'#9c8df6'},
+  '#categoryColorUsage': {textContent:''},
+};
+let paletteButtons = [], previousPaletteHtml = '';
+const rootColors = {'--uav':'#ff6b6b','--wifi':'#59a8ff','--bluetooth':'#62e8ff',
+  '--cellular':'#65d687','--gnss':'#ffd166','--vhf':'#b28dff','--uhf':'#ff9f5a','--other':'#93a0b2'};
+const paletteContext = {
+  console, setTimeout, clearTimeout, URLSearchParams, location:{search:''},
+  getComputedStyle:()=>({getPropertyValue:key=>rootColors[key]||''}),
+  document:{documentElement:{},querySelector:selector=>paletteUi[selector],
+    querySelectorAll:selector=>{
+      if (selector!=='#categoryPalette [data-palette-color]') return [];
+      if (paletteUi['#categoryPalette'].innerHTML!==previousPaletteHtml) {
+        previousPaletteHtml=paletteUi['#categoryPalette'].innerHTML;
+        paletteButtons=[...previousPaletteHtml.matchAll(/data-palette-color="(#[0-9a-f]{6})"/g)]
+          .map(([,paletteColor])=>({dataset:{paletteColor},attrs:{},setAttribute(key,value){this.attrs[key]=value;}}));
+      }
+      return paletteButtons;
+    }},
+};
+const paletteApi=vm.runInNewContext(src.slice(0,src.indexOf('function select(id)'))+
+  '\n({setCategories,categoryColorHex,renderCategoryPalette,updateCategoryPaletteSelection})',paletteContext);
+assert.equal(paletteApi.categoryColorHex('uav'),'#ff6b6b');
+const testCategory={id:'user-12345678-1234-1234-1234-1234567890ab',name:'Датчики IoT',color:'#aabbcc'};
+paletteApi.setCategories([testCategory]);
+paletteApi.renderCategoryPalette();
+assert.equal(paletteButtons.length,9);
+assert.match(paletteUi['#categoryPalette'].innerHTML,/БПЛА/);
+assert.match(paletteUi['#categoryPalette'].innerHTML,/Датчики IoT/);
+assert.match(paletteUi['#categoryPalette'].innerHTML,/role="unused"|aria-pressed="false"/);
+const wifiPreset=paletteButtons.find(button=>button.dataset.paletteColor==='#59a8ff');
+wifiPreset.onclick();
+assert.equal(paletteUi['#categoryColor'].value,'#59a8ff');
+assert.equal(wifiPreset.attrs['aria-pressed'],'true');
+assert.match(paletteUi['#categoryColorUsage'].textContent,/Wi.Fi/);
+paletteUi['#categoryColor'].value='#123456';
+paletteApi.updateCategoryPaletteSelection();
+assert.match(paletteUi['#categoryColorUsage'].textContent,/не використовується/);
+assert.equal(wifiPreset.attrs['aria-pressed'],'false');
+console.log('PASS: category palette shows labels and colors, CSS-variable resolution, preset selection and used-color hint');
+
+// Category priority: migration of old categories, validation, and map lane/z-order.
+const priorityApi = vm.runInNewContext(helpers+`
+({validateCategories,validatePriority,validateBasePriorities,
+  setBaseCategoryPriorities,categoryPriority,setCategories})`,{...ctx});
+assert.equal(priorityApi.validateCategories([testCategory])[0].priority,0);
+assert.equal(priorityApi.validateCategories([{...testCategory,priority:7}])[0].priority,7);
+assert.throws(()=>priorityApi.validateCategories([{...testCategory,priority:11}]),/Пріоритет/);
+assert.throws(()=>priorityApi.validatePriority(3.5),/Пріоритет/);
+assert.throws(()=>priorityApi.validateBasePriorities({unknown:3}),/Невідома/);
+assert.equal(priorityApi.validateBasePriorities({wifi:9}).wifi,9);
+assert.equal(priorityApi.validateBasePriorities({wifi:0}).wifi,undefined);
+priorityApi.setBaseCategoryPriorities({wifi:9});
+assert.equal(priorityApi.categoryPriority('wifi'),9);
+priorityApi.setCategories([{...testCategory,priority:5}]);
+assert.equal(priorityApi.categoryPriority(testCategory.id),5);
+assert.match(paletteBody,/id="categoryPriority"/);
+assert.match(paletteBody,/id="standardCategoryPriorities"/);
+ui.setBaseCategoryPriorities({wifi:10,other:0});
+ui.setTestRecords([
+  {...candidate,id:'low',cat:'other',a:2400,b:2500,affiliation:'friendly'},
+  {...candidate,id:'high',cat:'wifi',a:2410,b:2490,affiliation:'hostile'},
+]);
+ui.renderMap();
+assert.match(element('#bands').innerHTML,/data-id="high"[^>]*top:18px/);
+assert.match(element('#bands').innerHTML,/data-id="low"[^>]*top:90px/);
+assert.match(element('#bands').innerHTML,/data-id="high"[^>]*z-index:40/); // Highest level + selected-independent layer.
+assert.match(element('#bands').innerHTML,/data-id="low"[^>]*z-index:21/); // Selected low band remains below high.
+assert.match(element('#bands').innerHTML,/data-affiliation="hostile"/); // Red/green status preserved.
+assert.match(paletteCss,/\.cursor\{z-index:100\}/); // Frequency cursor above all layers.
+console.log('PASS: priority validation, built-in/custom defaults, and upper-lane/z-index ordering with affiliation intact');
